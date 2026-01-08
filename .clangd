@@ -14,7 +14,7 @@ Index:
 # 诊断设置
 Diagnostics:
   UnusedIncludes: Strict           # 严格检查未使用的头文件
-  MissingIncludes: Strict          # 严格检查缺失的头文件
+  MissingIncludes: Relaxed         # 放宽检查缺失的头文件（允许间接包含） Strict Relaxed
   ClangTidy:
     Add:
       - bugprone-*                 # 检测潜在bug

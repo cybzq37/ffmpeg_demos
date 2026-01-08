@@ -1,3 +1,4 @@
+
 #define SESSIONS 1
 #define W 1920
 #define H 1080
@@ -19,14 +20,20 @@ extern "C" {
 #include <libavfilter/buffersink.h>
 #include <libavfilter/buffersrc.h>
 #include <libavformat/avformat.h>
+#include <libavutil/frame.h>
 #include <libavutil/imgutils.h>
+#include <libavutil/log.h>
+#include <libavutil/mem.h>
 #include <libavutil/opt.h>
 #include <libavutil/time.h>
 #include <libswscale/swscale.h>
 }
 
+#include <array>
+#include <cstdint>
 #include <condition_variable>
 #include <deque>
+#include <iostream>
 #include <mutex>
 #include <set>
 #include <string>
@@ -37,7 +44,7 @@ struct QueueItem {
 	AVFrame* frame;
 	int is_audio;
 	int pts;
-	bool operator<(QueueItem const& other) { return pts < other.pts; }
+	bool operator<(QueueItem const& other) const { return pts < other.pts; }
 };
 
 const int framerate = 60;
@@ -137,9 +144,9 @@ void compositor() {
 	// 分配一个输出帧结构体（未使用，可能是遗留代码）
 	AVFrame* output_frame = av_frame_alloc();
 	// 设置输出像素格式列表：只接受YUV420P格式，以AV_PIX_FMT_NONE结尾
-	enum AVPixelFormat pix_fmts[2] = { AV_PIX_FMT_YUV420P, AV_PIX_FMT_NONE };
+	std::array<AVPixelFormat, 2> pix_fmts = { AV_PIX_FMT_YUV420P, AV_PIX_FMT_NONE };
 	// 为输出滤镜设置像素格式选项，确保输出为YUV420P格式
-	av_opt_set_int_list(output_filter_ctx, "pix_fmts", pix_fmts, AV_PIX_FMT_NONE,
+	av_opt_set_int_list(output_filter_ctx, "pix_fmts", pix_fmts.data(), AV_PIX_FMT_NONE,
 		AV_OPT_SEARCH_CHILDREN);
 	// 构建滤镜描述字符串：
 	// [in0] - 使用第一个输入端点（in0）
@@ -147,10 +154,7 @@ void compositor() {
 	// pad=W:H - 将视频pad（填充/裁剪）到WxH分辨率（1920x1080）
 	// [out] - 输出端点
 	// 注意：当前只使用了in0，其他输入（in1, in2等）虽然创建了但未在滤镜链中使用
-	std::string filter_desc =
-		std::string() +
-		"[in0]setpts=PTS-STARTPTS,pad=" WSTR ":" HSTR
-		" [out]";
+	std::string filter_desc = std::string() + "[in0]setpts=PTS-STARTPTS,pad=" WSTR ":" HSTR " [out]";
 	// 解析滤镜描述字符串，构建滤镜图，连接输入和输出端点
 	ret = avfilter_graph_parse_ptr(filter_graph, filter_desc.c_str(),
 		&output_inout, input_inouts, nullptr);
@@ -172,37 +176,27 @@ void compositor() {
 // 参数i：会话索引，用于标识不同的输入流
 void scaler(int i) {
 	int ret = 0;
-	// 分配一个滤镜图结构体（未使用，可能是遗留代码）
-	AVFilterGraph* graph = avfilter_graph_alloc();
-	// 分配输入连接点结构体，用于描述滤镜图的输入端点
+
 	AVFilterInOut* input_inout = avfilter_inout_alloc();
-	// 分配输出连接点结构体，用于描述滤镜图的输出端点
 	AVFilterInOut* output_inout = avfilter_inout_alloc();
-	// 获取buffersink滤镜，用于从滤镜图输出端获取处理后的帧
-	const AVFilter* buffersink = avfilter_get_by_name("buffersink");
-	// 获取buffer滤镜，用于向滤镜图输入端推送原始帧
-	const AVFilter* buffer = avfilter_get_by_name("buffer");
-	// 输出滤镜上下文，用于从滤镜图获取处理后的帧
-	AVFilterContext* output_filter_ctx = nullptr;
-	// 输入滤镜上下文，用于向滤镜图推送原始帧
-	AVFilterContext* input_filter_ctx = nullptr;
-	// 分配滤镜图结构体，用于管理整个滤镜链
-	AVFilterGraph* filter_graph = avfilter_graph_alloc();
-	// 创建输出滤镜（buffersink），命名为"out"，用于从滤镜图获取处理后的帧
+	const AVFilter* buffersink = avfilter_get_by_name("buffersink"); // 输出滤镜
+	const AVFilter* buffer = avfilter_get_by_name("buffer"); // 输入滤镜
+	AVFilterContext* output_filter_ctx = nullptr; // 输出滤镜上下文
+	AVFilterContext* input_filter_ctx = nullptr; // 输入滤镜上下文
+    AVFilterGraph *filter_graph = avfilter_graph_alloc(); // 滤镜图
+    // 创建输出滤镜（buffersink），命名为"out"
 	ret = avfilter_graph_create_filter(&output_filter_ctx, buffersink, "out",
-		NULL, NULL, filter_graph);
-	if (ret) {
-		printf("create scaler out filter %d error %d\n", i, ret);
+		nullptr, nullptr, filter_graph);
+	if (ret < 0) {
+		std::cout << "create scaler out filter " << i << " error " << ret << '\n';
 		return;
 	}
 	// 创建输入滤镜（buffer），命名为"in"
 	// 设置输入参数：视频尺寸为WxH（1920x1080），像素格式为0（YUV420P），时间基为1/60，像素宽高比为1:1
 	ret = avfilter_graph_create_filter(&input_filter_ctx, buffer, "in",
-		"video_size=" WSTR "x" HSTR
-		":pix_fmt=0:time_base=1/60:pixel_aspect=1",
-		NULL, filter_graph);
-	if (ret) {
-		printf("create scaler in filter %d error %d\n", i, ret);
+		"video_size=" WSTR "x" HSTR ":pix_fmt=0:time_base=1/60:pixel_aspect=1", nullptr, filter_graph);
+	if (ret < 0) {
+		std::cout << "create scaler in filter " << i << " error " << ret << '\n';
 		return;
 	}
 
@@ -219,17 +213,16 @@ void scaler(int i) {
 	input_inout->next = nullptr;
 
 	// 设置输出像素格式列表：只接受YUV420P格式，以AV_PIX_FMT_NONE结尾
-	enum AVPixelFormat pix_fmts[2] = { AV_PIX_FMT_YUV420P, AV_PIX_FMT_NONE };
-	// 为输出滤镜设置像素格式选项，确保输出为YUV420P格式
-	av_opt_set_int_list(output_filter_ctx, "pix_fmts", pix_fmts, AV_PIX_FMT_NONE,
-		AV_OPT_SEARCH_CHILDREN);
+	std::array<AVPixelFormat, 2> pix_fmts = { AV_PIX_FMT_YUV420P, AV_PIX_FMT_NONE };
+    av_opt_set_int_list(output_filter_ctx, "pix_fmts", pix_fmts.data(),
+                            AV_PIX_FMT_NONE, AV_OPT_SEARCH_CHILDREN);
+
 	// 构建滤镜描述字符串：
 	// [in] - 输入端点
 	// setpts=PTS-STARTPTS - 重置时间戳，从0开始
 	// scale=w=HW:h=HH - 缩放视频到HWxHH分辨率（1920x1080）
 	// [out] - 输出端点
-	std::string filter_desc =
-		"[in]setpts=PTS-STARTPTS,scale=w=" HWSTR ":h=" HHSTR "[out]";
+	std::string filter_desc = "[in]setpts=PTS-STARTPTS,scale=w=" HWSTR ":h=" HHSTR "[out]";
 	// 解析滤镜描述字符串，构建滤镜图，连接输入和输出端点
 	ret = avfilter_graph_parse(filter_graph, filter_desc.c_str(), output_inout,
 		input_inout, nullptr);
@@ -437,7 +430,7 @@ void audio_input_handler(const std::string& url) {
 }
 
 void input_stream_handler(const std::string& url) {
-	
+
 	while (true) {
 		AVFormatContext* ctx = avformat_alloc_context();
 		int frames = 0;
@@ -463,7 +456,7 @@ void input_stream_handler(const std::string& url) {
 		AVCodecContext* decode_ctx = avcodec_alloc_context3(decode_codec);
 		avcodec_parameters_to_context(decode_ctx, ctx->streams[vidx]->codecpar);
 		avcodec_open2(decode_ctx, decode_codec, nullptr);
-		
+
 		printf("------ %d ------\n", i);
 		av_dump_format(ctx, 0, url.c_str(), 0);
 		AVPacket* packet = av_packet_alloc();
@@ -807,27 +800,27 @@ int main(int argc, char* argv[]) {
 	avformat_network_init(); // 初始化网络库
 
 	std::vector<std::thread> input_threads;
-	
-	blank_screen_generator();
+
+	blank_screen_generator(); // 生成一个占位画面帧（null_frame），当输入流不可用或出错时作为默认画面使用
 
 	for (int i = 0; i < SESSIONS; ++i) {
 		scaler(i); // 缩放
 	}
-	
+
 	compositor(); // 组合
 
 	for (int i = 0; i < SESSIONS; ++i) {
 		std::string url = "rtmp://localhost/live/" + inputPrefix + "-" + std::to_string(i + 1);
 		input_threads.emplace_back(std::thread(input_stream_handler(url), i));
 	}
-	
+
 	std::thread audio(audio_input_handler("rtmp://localhost/live/audio"));
 	std::thread output(output_thread);
 	std::thread output_io(output_io_thread);
 	for (auto&& thread : input_threads) {
 		thread.join();
 	}
-	
+
 	output.join();
 	output_io.join();
 	audio.join();
