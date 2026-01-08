@@ -1,0 +1,53 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/ffmpeg-merge.exe",
+            "args": [],
+            "cwd": "${workspaceFolder}/build",
+            "env": {
+                "PATH": "${workspaceFolder}/build;${env:PATH}"
+            },
+            "stopOnEntry": false,
+            "console": "integratedTerminal",
+            "preLaunchTask": "Build",
+            "sourceLanguages": ["cpp"],
+            "terminal": "integrated"
+        },
+        {
+            "name": "Debug (no build)",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/ffmpeg-merge.exe",
+            "args": [],
+            "cwd": "${workspaceFolder}/build",
+            "env": {
+                "PATH": "${workspaceFolder}/build;${env:PATH}"
+            },
+            "stopOnEntry": false,
+            "console": "integratedTerminal",
+            "sourceLanguages": ["cpp"],
+            "terminal": "integrated"
+        },
+        {
+            "name": "Release (Rebuild)",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${workspaceFolder}/build-release/ffmpeg-merge.exe",
+            "args": [],
+            "cwd": "${workspaceFolder}/build-release",
+            "env": {
+                "PATH": "${workspaceFolder}/build-release;${env:PATH}"
+            },
+            "stopOnEntry": false,
+            "console": "integratedTerminal",
+            "preLaunchTask": "Build Release",
+            "sourceLanguages": ["cpp"],
+            "terminal": "integrated",
+            "noDebug": true
+        }
+    ]
+}

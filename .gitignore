@@ -1,118 +1,49 @@
-# Prerequisites
-*.d
-
-# Object files
-*.o
-*.ko
-*.obj
-*.elf
-
-# Linker output
-*.ilk
-*.map
-*.exp
-
-# Precompiled Headers
-*.gch
-*.pch
-
-# Libraries
-*.lib
-*.a
-*.la
-*.lo
-
-# Shared objects (inc. Windows DLLs)
-*.dll
-*.so
-*.so.*
-*.dylib
-
-# Executables
-*.exe
-*.out
-*.app
-*.i*86
-*.x86_64
-*.hex
-
-# Debug files
-*.dSYM/
-*.su
-*.idb
-*.pdb
-
-# Kernel Module Compile Results
-*.mod*
-*.cmd
-.tmp_versions/
-modules.order
-Module.symvers
-Mkfile.old
-dkms.conf
-
-# cmake
-CMakeLists.txt.user
-CMakeCache.txt
-CMakeFiles
-CMakeScripts
-Testing
-Makefile
-cmake_install.cmake
-install_manifest.txt
-compile_commands.json
-CTestTestfile.cmake
-_deps
-
-*.pyc
-*.obj
-*.exe
-*.pdb
-*.ilk
-/build*/
-/build.ninja
-/ninja
-/ninja.bootstrap
-/build_log_perftest
-/canon_perftest
-/clparser_perftest
-/depfile_parser_perftest
-/hash_collision_bench
-/ninja_test
-/manifest_parser_perftest
-/graph.png
-/doc/manual.html
-/doc/doxygen
-*.patch
-.DS_Store
-
-# Eclipse project files
-.project
-.cproject
-
-# SublimeText project files
-*.sublime-project
-*.sublime-workspace
-
-# Ninja output
-build.ninja
-.ninja_deps
-.ninja_log
-
-# Visual Studio Code project files
-/.vscode/
-/.ccls-cache/
-
-# Qt Creator project files
-/CMakeLists.txt.user
-
-# clangd
-/.clangd/
-/compile_commands.json
-/.cache/
-
-# Visual Studio files
-.vs/
+# 构建目录
+build/
 out/
 bin/
+*.exe
+*.dll
+*.so
+*.dylib
 
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+CTestTestfile.cmake
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.sln
+*.vcxproj
+*.vcxproj.filters
+
+# clangd
+.clangd/
+.cache/
+
+# 编译产物
+*.obj
+*.o
+*.a
+*.lib
+*.pdb
+*.ilk
+*.exp
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+
+# 日志
+*.log
+
+# 临时文件
+tmp/
+temp/

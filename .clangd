@@ -1,0 +1,51 @@
+CompileFlags:
+  Add:
+    - -std=c++20
+    - -Wall
+    - -Wextra
+    - -ferror-limit=0              # 显示所有错误，不限制数量
+  CompilationDatabase: build
+
+# 索引设置 - 提升跨文件跳转和查找性能
+Index:
+  Background: Build                # 后台构建索引，加快符号查找
+  StandardLibrary: Yes             # 索引标准库，可以跳转到 std::vector 等定义
+
+# 诊断设置
+Diagnostics:
+  UnusedIncludes: Strict           # 严格检查未使用的头文件
+  MissingIncludes: Strict          # 严格检查缺失的头文件
+  ClangTidy:
+    Add:
+      - bugprone-*                 # 检测潜在bug
+      - modernize-*                # 现代化建议
+      - performance-*              # 性能优化建议
+      - readability-*              # 可读性建议
+      - cppcoreguidelines-*        # C++ Core Guidelines 规范
+    Remove:
+      - modernize-use-trailing-return-type
+      - readability-identifier-length       # 不限制变量名长度
+      - cppcoreguidelines-avoid-magic-numbers
+      - cppcoreguidelines-avoid-non-const-global-variables
+      - readability-magic-numbers
+
+# 代码补全设置
+Completion:
+  AllScopes: Yes                   # 补全时搜索所有作用域的符号，不只是当前作用域
+
+# 内联提示
+InlayHints:
+  Enabled: Yes
+  ParameterNames: Yes              # 显示参数名：func(x: 10, y: 20)
+  DeducedTypes: Yes                # 显示推导类型：auto (int) x = 42
+  Designators: Yes                 # 显示结构体字段名
+  BlockEnd: Yes                    # 显示代码块结束标记
+
+# 悬停提示
+Hover:
+  ShowAKA: Yes                     # 显示类型别名的真实类型
+
+# 语义高亮
+SemanticTokens:
+  DisabledKinds: []                # 启用所有语义高亮
+  DisabledModifiers: []

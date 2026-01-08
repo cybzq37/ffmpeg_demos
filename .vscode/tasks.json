@@ -1,0 +1,128 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        // ==================== Build Tasks ====================
+        {
+            "label": "CMake: Check and Configure (Debug)",
+            "type": "shell",
+            "command": "powershell",
+            "args": [
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                "$buildDir = Join-Path '${workspaceFolder}' 'build'; $buildNinja = Join-Path $buildDir 'build.ninja'; if ((-not (Test-Path $buildDir)) -or (-not (Test-Path $buildNinja))) { Write-Host 'Configuring project...' -ForegroundColor Yellow; cmake -B $buildDir -S '${workspaceFolder}' -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=ON; if ($LASTEXITCODE -ne 0) { Write-Host 'Configuration failed!' -ForegroundColor Red; exit $LASTEXITCODE } else { Write-Host 'Configuration complete' -ForegroundColor Green } } else { Write-Host 'Build directory exists, skipping configuration' -ForegroundColor Green }"
+            ],
+            "problemMatcher": [],
+            "detail": "Check and configure CMake project if needed (Debug mode)"
+        },
+        {
+            "label": "CMake: Build (Debug)",
+            "type": "shell",
+            "command": "powershell",
+            "args": [
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                "Write-Host 'Building...' -ForegroundColor Cyan; [Console]::OutputEncoding=[System.Text.Encoding]::UTF8; cmake --build '${workspaceFolder}/build' --config Debug -j 8; if ($LASTEXITCODE -eq 0) { Write-Host 'Build successful!' -ForegroundColor Green } else { Write-Host 'Build failed!' -ForegroundColor Red; exit $LASTEXITCODE }"
+            ],
+            "problemMatcher": [
+                {
+                    "owner": "cpp",
+                    "fileLocation": ["relative", "${workspaceFolder}"],
+                    "pattern": {
+                        "regexp": "^(.*):(\\d+):(\\d+):\\s+(warning|error):\\s+(.*)$",
+                        "file": 1,
+                        "line": 2,
+                        "column": 3,
+                        "severity": 4,
+                        "message": 5
+                    }
+                }
+            ],
+            "detail": "Build project (Debug mode)"
+        },
+        {
+            "label": "Build",
+            "dependsOn": [
+                "CMake: Check and Configure (Debug)",
+                "CMake: Build (Debug)"
+            ],
+            "dependsOrder": "sequence",
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": [],
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": false,
+                "panel": "shared",
+                "showReuseMessage": false,
+                "clear": true
+            },
+            "detail": "Build Debug version (auto configure)"
+        },
+        {
+            "label": "CMake: Clean and Configure (Release)",
+            "type": "shell",
+            "command": "powershell",
+            "args": [
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                "$buildDir = Join-Path '${workspaceFolder}' 'build-release'; if (Test-Path $buildDir) { Write-Host 'Cleaning old Release build...' -ForegroundColor Yellow; Remove-Item -Recurse -Force $buildDir; Write-Host 'Clean complete' -ForegroundColor Green }; Write-Host 'Configuring Release project...' -ForegroundColor Yellow; cmake -B $buildDir -S '${workspaceFolder}' -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON; if ($LASTEXITCODE -ne 0) { Write-Host 'Configuration failed!' -ForegroundColor Red; exit $LASTEXITCODE } else { Write-Host 'Configuration complete' -ForegroundColor Green }"
+            ],
+            "problemMatcher": [],
+            "detail": "Clean and configure CMake project (Release mode)"
+        },
+        {
+            "label": "CMake: Build (Release)",
+            "type": "shell",
+            "command": "powershell",
+            "args": [
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                "Write-Host 'Building Release...' -ForegroundColor Cyan; [Console]::OutputEncoding=[System.Text.Encoding]::UTF8; cmake --build '${workspaceFolder}/build-release' --config Release -j 8; if ($LASTEXITCODE -eq 0) { Write-Host 'Release build successful!' -ForegroundColor Green } else { Write-Host 'Release build failed!' -ForegroundColor Red; exit $LASTEXITCODE }"
+            ],
+            "problemMatcher": [
+                {
+                    "owner": "cpp",
+                    "fileLocation": ["relative", "${workspaceFolder}"],
+                    "pattern": {
+                        "regexp": "^(.*):(\\d+):(\\d+):\\s+(warning|error):\\s+(.*)$",
+                        "file": 1,
+                        "line": 2,
+                        "column": 3,
+                        "severity": 4,
+                        "message": 5
+                    }
+                }
+            ],
+            "detail": "Build project (Release mode)"
+        },
+        {
+            "label": "Build Release",
+            "dependsOn": [
+                "CMake: Clean and Configure (Release)",
+                "CMake: Build (Release)"
+            ],
+            "dependsOrder": "sequence",
+            "problemMatcher": [],
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": false,
+                "panel": "shared",
+                "showReuseMessage": false,
+                "clear": true
+            },
+            "detail": "Clean and rebuild Release version completely"
+        }
+    ]
+}

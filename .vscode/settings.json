@@ -1,0 +1,99 @@
+{
+    // ==================== clangd 配置 ====================
+    "clangd.arguments": [
+        "--compile-commands-dir=${workspaceFolder}/build",
+        "--background-index",
+        "--clang-tidy",
+        "--completion-style=detailed",
+        "--header-insertion=iwyu",
+        "--pch-storage=memory",
+        "-j=4",
+        "--all-scopes-completion",
+        "--function-arg-placeholders",
+        "--enable-config",
+        "--log=error",
+        "--pretty",
+        "--suggest-missing-includes"
+    ],
+    "clangd.path": "clangd",
+    "clangd.checkUpdates": false,
+    "clangd.onConfigChanged": "restart",
+
+    // ==================== 编辑器配置 ====================
+    "editor.formatOnSave": false,
+    "editor.formatOnPaste": false,
+    "editor.tabSize": 4,
+    "editor.insertSpaces": true,
+    "editor.detectIndentation": true,
+    "editor.renderWhitespace": "selection",
+    "editor.rulers": [80, 120],
+    "editor.wordWrap": "off",
+    "editor.minimap.enabled": true,
+    "editor.bracketPairColorization.enabled": true,
+    "editor.guides.bracketPairs": "active",
+    "editor.inlayHints.enabled": "on",
+    "editor.suggest.snippetsPreventQuickSuggestions": false,
+    "editor.semanticHighlighting.enabled": true,
+
+    // ==================== 文件配置 ====================
+    "files.associations": {
+        "*.h": "c",
+        "*.c": "c",
+        "*.cpp": "cpp",
+        "*.hpp": "cpp",
+        "*.cc": "cpp",
+        "*.cxx": "cpp",
+        "*.tpp": "cpp",
+        "CMakeLists.txt": "cmake",
+        "*.cmake": "cmake"
+    },
+    "files.encoding": "utf8",
+    "files.autoSave": "afterDelay",
+    "files.autoSaveDelay": 1000,
+    "files.trimTrailingWhitespace": true,
+    "files.insertFinalNewline": true,
+
+    // 排除不必要的文件夹（提升性能）
+    "files.exclude": {
+        "**/.git": true,
+        "**/.svn": true,
+        "**/.hg": true,
+        "**/CVS": true,
+        "**/.DS_Store": true,
+        "**/Thumbs.db": true
+    },
+    "search.exclude": {
+        "**/build": true,
+        "**/build-*": true,
+        "**/.vscode": false,
+        "**/.git": true,
+        "**/node_modules": true
+    },
+
+    // ==================== CMake 配置 ====================
+    "cmake.configureOnOpen": false,
+    "cmake.buildDirectory": "${workspaceFolder}/build",
+    "cmake.generator": "Ninja",
+    "cmake.configureOnEdit": false,
+    "cmake.showOptionsMovedNotification": false,
+
+    // ==================== 终端配置 ====================
+    "terminal.integrated.encoding": "utf8",
+    "terminal.integrated.defaultProfile.windows": "PowerShell",
+    "terminal.integrated.scrollback": 10000,
+    "terminal.integrated.cursorBlinking": true,
+    "terminal.integrated.cursorStyle": "line",
+
+    // ==================== 调试配置 ====================
+    "debug.console.fontSize": 14,
+    "debug.console.wordWrap": true,
+    "debug.inlineValues": "on",
+    "debug.showBreakpointsInOverviewRuler": true,
+
+    // ==================== 其他优化 ====================
+    "window.title": "${dirty}${activeEditorShort}${separator}${rootName}",
+    "workbench.editor.highlightModifiedTabs": true,
+    "workbench.editor.tabSizing": "shrink",
+    "explorer.confirmDelete": false,
+    "explorer.confirmDragAndDrop": false
+}
