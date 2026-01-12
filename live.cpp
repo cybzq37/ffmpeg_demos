@@ -30,6 +30,7 @@ extern "C" {
 }
 
 #include <array>
+#include <cassert>
 #include <cstdint>
 #include <condition_variable>
 #include <deque>
@@ -71,10 +72,11 @@ static int interrupt_cb(void* ctx) {
 }
 
 AVFrame* null_frame;
-std::mutex locks[SESSIONS];
-AVFilterContext* inputs[SESSIONS];
-AVFilterContext* scaled[SESSIONS];
-AVFilterContext* compose_inputs[SESSIONS];
+std::array<std::mutex, SESSIONS> locks;
+
+std::array<AVFilterContext*, SESSIONS> inputs{};
+std::array<AVFilterContext*, SESSIONS> scaled{};
+std::array<AVFilterContext*, SESSIONS> compose_inputs{};
 AVFilterContext* composed;
 
 // 创建合成器滤镜图，用于将多个输入流组合成一个输出流
@@ -175,20 +177,38 @@ void compositor() {
 // 创建视频缩放滤镜图，将输入视频从WxH分辨率缩放到HWxHH分辨率
 // 参数i：会话索引，用于标识不同的输入流
 void scaler(int i) {
+	assert(i >= 0 && i < SESSIONS);
 	int ret = 0;
 
 	AVFilterInOut* input_inout = avfilter_inout_alloc();
 	AVFilterInOut* output_inout = avfilter_inout_alloc();
+	if (input_inout == nullptr || output_inout == nullptr) {
+		std::cout << "alloc filter inout failed\n";
+		if (input_inout != nullptr) avfilter_inout_free(&input_inout);
+		if (output_inout != nullptr) avfilter_inout_free(&output_inout);
+		return;
+	}
+
 	const AVFilter* buffersink = avfilter_get_by_name("buffersink"); // 输出滤镜
 	const AVFilter* buffer = avfilter_get_by_name("buffer"); // 输入滤镜
 	AVFilterContext* output_filter_ctx = nullptr; // 输出滤镜上下文
 	AVFilterContext* input_filter_ctx = nullptr; // 输入滤镜上下文
-    AVFilterGraph *filter_graph = avfilter_graph_alloc(); // 滤镜图
-    // 创建输出滤镜（buffersink），命名为"out"
+	AVFilterGraph* filter_graph = avfilter_graph_alloc(); // 滤镜图
+	if (filter_graph == nullptr) {
+		std::cout << "alloc filter graph failed\n";
+		avfilter_inout_free(&input_inout);
+		avfilter_inout_free(&output_inout);
+		return;
+	}
+
+	// 创建输出滤镜（buffersink），命名为"out"
 	ret = avfilter_graph_create_filter(&output_filter_ctx, buffersink, "out",
 		nullptr, nullptr, filter_graph);
 	if (ret < 0) {
 		std::cout << "create scaler out filter " << i << " error " << ret << '\n';
+		avfilter_inout_free(&input_inout);
+		avfilter_inout_free(&output_inout);
+		avfilter_graph_free(&filter_graph);
 		return;
 	}
 	// 创建输入滤镜（buffer），命名为"in"
@@ -197,6 +217,9 @@ void scaler(int i) {
 		"video_size=" WSTR "x" HSTR ":pix_fmt=0:time_base=1/60:pixel_aspect=1", nullptr, filter_graph);
 	if (ret < 0) {
 		std::cout << "create scaler in filter " << i << " error " << ret << '\n';
+		avfilter_inout_free(&input_inout);
+		avfilter_inout_free(&output_inout);
+		avfilter_graph_free(&filter_graph);
 		return;
 	}
 
@@ -214,8 +237,8 @@ void scaler(int i) {
 
 	// 设置输出像素格式列表：只接受YUV420P格式，以AV_PIX_FMT_NONE结尾
 	std::array<AVPixelFormat, 2> pix_fmts = { AV_PIX_FMT_YUV420P, AV_PIX_FMT_NONE };
-    av_opt_set_int_list(output_filter_ctx, "pix_fmts", pix_fmts.data(),
-                            AV_PIX_FMT_NONE, AV_OPT_SEARCH_CHILDREN);
+	av_opt_set_int_list(output_filter_ctx, "pix_fmts", pix_fmts.data(),
+		AV_PIX_FMT_NONE, AV_OPT_SEARCH_CHILDREN);
 
 	// 构建滤镜描述字符串：
 	// [in] - 输入端点
@@ -224,22 +247,30 @@ void scaler(int i) {
 	// [out] - 输出端点
 	std::string filter_desc = "[in]setpts=PTS-STARTPTS,scale=w=" HWSTR ":h=" HHSTR "[out]";
 	// 解析滤镜描述字符串，构建滤镜图，连接输入和输出端点
-	ret = avfilter_graph_parse(filter_graph, filter_desc.c_str(), output_inout,
-		input_inout, nullptr);
+	// 注意：avfilter_graph_parse 会接管并释放 input_inout 和 output_inout
+	// avfilter_graph_parse 的参数顺序是：graph, filters, inputs, outputs, log_ctx
+	ret = avfilter_graph_parse(filter_graph, filter_desc.c_str(), input_inout,
+		output_inout, nullptr);
+	input_inout = nullptr; // 已被 avfilter_graph_parse 接管
+	output_inout = nullptr; // 已被 avfilter_graph_parse 接管
 	if (ret < 0) {
 		printf("graph parse failed %d\n", ret);
+		avfilter_graph_free(&filter_graph);
 		return;
 	}
 	// 配置滤镜图，验证并初始化所有滤镜连接
 	ret = avfilter_graph_config(filter_graph, nullptr);
 	if (ret < 0) {
 		printf("graph config failed %d\n", ret);
+		avfilter_graph_free(&filter_graph);
 		return;
 	}
 	// 将输出滤镜上下文保存到全局数组，供后续使用（用于获取缩放后的帧）
-	scaled[i] = output_filter_ctx;
+	// 注意：filter_graph 需要保持存在，因为滤镜上下文依赖于它
+	scaled.at(i) = output_filter_ctx;
 	// 将输入滤镜上下文保存到全局数组，供后续使用（用于推送原始帧）
-	inputs[i] = input_filter_ctx;
+	inputs.at(i) = input_filter_ctx;
+	// filter_graph 会在程序结束时或显式清理时释放
 }
 
 // 生成一个占位画面帧（null_frame），当输入流不可用或出错时作为默认画面使用
