@@ -23,8 +23,8 @@ set(FFMPEG_LIB_DIR "${FFMPEG_ROOT}/lib")
 
 
 # 将源代码添加到此项目的可执行文件。
-add_executable (ffmpeg-merge 
-    "win-thread.cpp"
+add_executable (ffmpeg-merge
+    "live.cpp"
 )
 
 if (CMAKE_VERSION VERSION_GREATER 3.12)
@@ -34,30 +34,30 @@ endif()
 # 使用 target_include_directories 替代全局 include_directories
 target_include_directories(ffmpeg-merge PRIVATE ${FFMPEG_INCLUDE_DIR})
 target_link_directories(ffmpeg-merge PRIVATE ${FFMPEG_LIB_DIR})
-# target_link_libraries(ffmpeg-merge PRIVATE     
-#     avcodec
-#     avdevice
-#     avfilter
-#     avformat
-#     avutil
-#     postproc
-#     swresample
-#     swscale)
+target_link_libraries(ffmpeg-merge PRIVATE
+    avcodec
+    avdevice
+    avfilter
+    avformat
+    avutil
+    postproc
+    swresample
+    swscale)
 
 # 设置运行时 DLL 路径（Windows）
 if(WIN32)
     set(FFMPEG_BIN_DIR "${FFMPEG_ROOT}/bin")
-    
+
     # 检查 bin 目录是否存在
     if(EXISTS "${FFMPEG_BIN_DIR}")
         # 设置 Visual Studio 调试器环境变量（使用正斜杠，CMake 会自动转换）
         set_target_properties(ffmpeg-merge PROPERTIES
             VS_DEBUGGER_ENVIRONMENT "PATH=${FFMPEG_BIN_DIR};$ENV{PATH}"
         )
-        
+
         # 获取所有需要复制的 DLL 文件列表
         file(GLOB FFMPEG_DLLS "${FFMPEG_BIN_DIR}/*.dll")
-        
+
         # 复制所有 DLL 到输出目录
         if(FFMPEG_DLLS)
             foreach(DLL ${FFMPEG_DLLS})
@@ -75,7 +75,7 @@ if(WIN32)
     else()
         message(WARNING "FFmpeg bin directory not found: ${FFMPEG_BIN_DIR}")
     endif()
-    
+
 endif()
 
 # 安装规则
