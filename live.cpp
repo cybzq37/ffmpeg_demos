@@ -986,7 +986,7 @@ void output_thread() {
 		// ========== 第四步：帧率控制 ==========
 		// 计算本次循环消耗的时间
 		// 16666 微秒 = 1/60 秒，即期望每帧处理时间不超过 16.666ms（60fps）
-		int sl = (16666 - (av_gettime() - last));
+		int64_t sl = (16666 - (av_gettime() - last));
 		if (sl < 0) {
 			// 处理时间超过预期，无法维持 60fps
 			printf("deadline missed\n");
@@ -1195,7 +1195,7 @@ void output_io_thread() {
 	audio_ctx->bit_rate = 192 * 1024;          // 192 kbps
 	audio_ctx->sample_fmt = audio_codec->sample_fmts[0];  // 使用编码器支持的第一个采样格式
 	audio_ctx->channels = 2;                   // 立体声
-	audio_ctx->time_base = (AVRational){ 1, samplerate };  // 时间基：1/48000 秒
+	audio_ctx->time_base = AVRational{ 1, samplerate };  // 时间基：1/48000 秒
 	audio_ctx->channel_layout = av_get_default_channel_layout(2);  // 立体声布局
 
 	// ========== 第七步：配置视频编码器 ==========
@@ -1357,14 +1357,14 @@ void output_io_thread() {
 			if (!is_audio) {
 				// 视频PTS：帧数 / 帧率，然后转换为流的时间基单位
 				// oframes 是全局变量，表示已输出的视频帧数
-				video_pts = (oframes * 1.0 / framerate) / (av_q2d(stream->time_base));
+				video_pts = (int64_t)((oframes * 1.0 / framerate) / (av_q2d(stream->time_base)));
 				++oframes;  // 视频帧计数加1
 			}
 			else {
 				// 音频PTS：样本数 / 采样率，然后转换为流的时间基单位
 				// aframes 是全局变量，表示已输出的音频帧数
 				// 1024 是AAC编码器每帧的样本数（固定值）
-				audio_pts = (aframes * 1024.0 / samplerate) / (av_q2d(audio->time_base));
+				audio_pts = (int64_t)((aframes * 1024.0 / samplerate) / (av_q2d(audio->time_base)));
 				++aframes;  // 音频帧计数加1
 			}
 
@@ -1381,7 +1381,7 @@ void output_io_thread() {
 			// 将视频帧发送给编码器
 			ret = avcodec_send_frame(ocodec_ctx, output_frame);
 			if (ret) {
-				printf("encode send video frame %d err %d\n", oframes, ret);
+				printf("encode send video frame %I64d err %d\n", oframes, ret);
 				av_frame_free(&output_frame);
 				continue;  // 编码失败，跳过当前帧
 			}
@@ -1400,7 +1400,7 @@ void output_io_thread() {
 
 				// 设置数据包的时间戳和持续时间
 				packet->pts = packet->dts = video_pts;  // PTS和DTS相同（简化处理）
-				packet->duration = (double)(1.0 / framerate) / av_q2d(stream->time_base);  // 每帧持续时间
+				packet->duration = (int64_t)((double)(1.0 / framerate) / av_q2d(stream->time_base));  // 每帧持续时间
 				packet->stream_index = 0;  // 视频流索引为0
 				last_pts = packet->pts;
 
@@ -1415,7 +1415,7 @@ void output_io_thread() {
 
 				// 每600帧（约10秒）打印一次进度
 				if (oframes % 600 == 0) {
-					printf("sent %ld video frames\n", oframes);
+					printf("sent %I64d video frames\n", oframes);
 				}
 
 				// 释放数据包的引用（不释放packet结构体本身）
@@ -1466,7 +1466,7 @@ void output_io_thread() {
 					packet->pts = packet->dts = audio_pts;  // PTS和DTS相同
 					last_pts = packet->pts;
 					// AAC每帧1024个样本，持续时间为 1024/采样率 秒
-					packet->duration = (double)(1024.0 / samplerate) / av_q2d(audio->time_base);
+					packet->duration = (int64_t)((double)(1024.0 / samplerate) / av_q2d(audio->time_base));
 					packet->stream_index = 1;  // 音频流索引为1
 
 					// 写入本地文件（克隆数据包）
@@ -1534,10 +1534,10 @@ int main(int argc, char* argv[]) {
 	std::vector<std::thread> input_threads;
 	for (int i = 0; i < SESSIONS; ++i) {
 		std::string url = "rtmp://localhost/live/" + inputPrefix + "-" + std::to_string(i + 1);
-		input_threads.emplace_back(std::thread(input_stream_handler(url), i));
+		input_threads.emplace_back(input_stream_handler, url, i);
 	}
 
-	std::thread audio(audio_input_handler("rtmp://localhost/live/audio"));
+	std::thread audio(audio_input_handler);
 	std::thread output(output_thread);
 	std::thread output_io(output_io_thread);
 	for (auto&& thread : input_threads) {
