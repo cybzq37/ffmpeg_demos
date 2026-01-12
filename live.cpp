@@ -1,5 +1,5 @@
 
-#define SESSIONS 1
+#define SESSIONS 4
 #define W 1920
 #define H 1080
 #define WSTR "1920"
@@ -156,12 +156,19 @@ void compositor() {
 	av_opt_set_int_list(output_filter_ctx, "pix_fmts", pix_fmts.data(), AV_PIX_FMT_NONE,
 		AV_OPT_SEARCH_CHILDREN);
 	// 构建滤镜描述字符串：
-	// [in0] - 使用第一个输入端点（in0）
+	// 组合4个输入流为2x2网格布局
+	// [in0][in1][in2][in3] - 4个输入端点
+	// scale=w=960:h=540 - 将每个输入缩放到960x540（1920/2 x 1080/2）
 	// setpts=PTS-STARTPTS - 重置时间戳，从0开始
-	// pad=W:H - 将视频pad（填充/裁剪）到WxH分辨率（1920x1080）
-	// [out] - 输出端点
-	// 注意：当前只使用了in0，其他输入（in1, in2等）虽然创建了但未在滤镜链中使用
-	std::string filter_desc = std::string() + "[in0]setpts=PTS-STARTPTS,pad=" WSTR ":" HSTR " [out]";
+	// xstack=inputs=4:layout=0_0|960_0|0_540|960_540 - 2x2网格布局
+	//   layout说明：(x,y)坐标：0_0=左上, 960_0=右上, 0_540=左下, 960_540=右下
+	// [out] - 输出端点（最终输出为1920x1080）
+	std::string filter_desc =
+		"[in0]scale=w=960:h=540,setpts=PTS-STARTPTS[in0_scaled];"
+		"[in1]scale=w=960:h=540,setpts=PTS-STARTPTS[in1_scaled];"
+		"[in2]scale=w=960:h=540,setpts=PTS-STARTPTS[in2_scaled];"
+		"[in3]scale=w=960:h=540,setpts=PTS-STARTPTS[in3_scaled];"
+		"[in0_scaled][in1_scaled][in2_scaled][in3_scaled]xstack=inputs=4:layout=0_0|960_0|0_540|960_540[out]";
 	// 解析滤镜描述字符串，构建滤镜图，连接输入和输出端点
 	// 注意：avfilter_graph_parse_ptr 成功时会接管并释放 input_inouts 和 output_inout
 	ret = avfilter_graph_parse_ptr(filter_graph, filter_desc.c_str(),
@@ -694,12 +701,18 @@ void input_stream_handler(const std::string& url, int i) {
 
 		// ========== 第二步：打开输入流 ==========
 		// 打开指定的 RTMP URL，读取流的基本信息（但不读取具体数据）
+		printf("Stream %d: Attempting to connect to %s\n", i, url.c_str());
 		int ret = avformat_open_input(&ctx, url.c_str(), nullptr, nullptr);
 		if (ret) {
-			printf("open_input %d %d\n", i, ret);
+			char errbuf[AV_ERROR_MAX_STRING_SIZE];
+			av_strerror(ret, errbuf, AV_ERROR_MAX_STRING_SIZE);
+			printf("Stream %d: open_input failed %d: %s\n", i, ret, errbuf);
 			avformat_free_context(ctx);  // 打开失败，释放上下文
-			return;  // 如果无法打开输入流，退出函数（不再重试）
+			// 等待5秒后重试，避免频繁重连
+			av_usleep(5000000);
+			continue;  // 继续重试，而不是退出
 		}
+		printf("Stream %d: Successfully connected to %s\n", i, url.c_str());
 
 		// ========== 第三步：查找流信息 ==========
 		// 读取流的详细信息，包括编码格式、分辨率、帧率等
@@ -822,6 +835,13 @@ void input_stream_handler(const std::string& url, int i) {
 						first_frame = av_gettime();
 					}
 
+					// 确保帧有有效的 PTS，如果没有则设置一个
+					// 缩放滤镜需要有效的 PTS 才能正确处理帧
+					if (frame->pts == AV_NOPTS_VALUE) {
+						// 如果没有 PTS，使用帧号作为 PTS（基于解码器的时间基）
+						frame->pts = frames;
+					}
+
 					// 在添加第一帧之前，设置输入参数以匹配实际输入流属性
 					// 这样可以避免 "Changing video frame properties on the fly" 警告
 					if (!parameters_set && inputs[i] != nullptr) {
@@ -839,8 +859,9 @@ void input_stream_handler(const std::string& url, int i) {
 								printf("warning: failed to set input parameters for stream %d: %d\n", i, ret);
 							} else {
 								parameters_set = true;
-								printf("input stream %d parameters set: %dx%d, format=%d\n",
-									i, frame->width, frame->height, frame->format);
+								printf("Stream %d: input parameters set successfully: %dx%d, format=%d, time_base=%d/%d\n",
+									i, frame->width, frame->height, frame->format,
+									decode_ctx->time_base.num, decode_ctx->time_base.den);
 							}
 						}
 					}
@@ -867,8 +888,15 @@ void input_stream_handler(const std::string& url, int i) {
 						ret = av_buffersrc_add_frame(inputs[i], frame);
 					}
 					if (ret < 0) {
-						printf("input %d add buffersrc failed %d\n", i, ret);
+						char errbuf[AV_ERROR_MAX_STRING_SIZE];
+						av_strerror(ret, errbuf, AV_ERROR_MAX_STRING_SIZE);
+						printf("Stream %d: add buffersrc failed %d: %s\n", i, ret, errbuf);
 						break;  // 添加失败，跳出循环
+					}
+					// 每100帧打印一次进度，并确认帧已添加到滤镜
+					if (frames % 100 == 0) {
+						printf("Stream %d: processed %d frames, added to scaler (pts=%lld, size=%dx%d)\n",
+							i, frames, (long long)frame->pts, frame->width, frame->height);
 					}
 				}
 			}
@@ -880,14 +908,19 @@ void input_stream_handler(const std::string& url, int i) {
 		// ========== 第九步：清理资源并准备重连 ==========
 	retry:
 		// 重置最后帧时间戳，表示流已断开
+		printf("Stream %d: Connection lost, cleaning up and retrying...\n", i);
 		lastFrame[i] = -1;
 		first_frame = -1;
+		parameters_set = false;  // 重置参数设置标志
 
 		// 向滤镜图输入一个空帧（占位帧），表示当前流不可用
 		// 这样输出端可以继续工作，使用占位画面
 		if (inputs[i] != nullptr) {
 			av_buffersrc_write_frame(inputs[i], null_frame);
 		}
+
+		// 等待2秒后重连，避免频繁重连
+		av_usleep(2000000);
 
 		// 释放解码器上下文
 		// 注意：使用 avcodec_free_context 而不是 avcodec_close
@@ -994,9 +1027,45 @@ void output_thread() {
 					printf("clone frame failed %d\n", i);
 					// 如果克隆失败，使用占位帧
 					stream_frames[i] = av_frame_clone(null_frame);
+				} else {
+					// 成功获取到真实帧，打印信息（每100帧打印一次，避免刷屏）
+					static int success_count[SESSIONS] = { 0 };
+					success_count[i]++;
+					if (success_count[i] % 100 == 0) {
+						printf("Stream %d: successfully got frame %d from scaler (size=%dx%d)\n",
+							i, success_count[i], pull_frame->width, pull_frame->height);
+					}
+					// 重置错误打印标志
+					static bool error_printed[SESSIONS] = { false };
+					if (error_printed[i]) {
+						printf("Stream %d: error cleared, successfully got frame from scaler\n", i);
+						error_printed[i] = false;
+					}
 				}
 				// 释放 pull_frame 中的数据引用（不释放结构体本身）
 				av_frame_unref(pull_frame);
+			} else if (ret == AVERROR(EAGAIN)) {
+				// EAGAIN 表示需要更多输入数据，这是正常的，继续使用旧帧
+				// 但如果 stream_frames[i] 仍然是 null_frame，说明还没有收到任何真实帧
+				// 这种情况下不应该继续使用 null_frame，而是等待真实帧
+				// 检查 stream_frames[i] 是否仍然是 null_frame
+				static int eagain_count[SESSIONS] = { 0 };
+				eagain_count[i]++;
+				// 每100次打印一次，避免刷屏（降低阈值以便更快发现问题）
+				if (eagain_count[i] % 100 == 0) {
+					printf("Stream %d: av_buffersink_get_frame EAGAIN (count=%d), waiting for frames...\n", i, eagain_count[i]);
+				}
+			} else if (ret != AVERROR_EOF) {
+				// 其他错误（除了 EOF），打印错误信息用于调试
+				// EOF 是正常的，表示流结束
+				char errbuf[AV_ERROR_MAX_STRING_SIZE];
+				av_strerror(ret, errbuf, AV_ERROR_MAX_STRING_SIZE);
+				// 只在第一次出现错误时打印，避免刷屏
+				static bool error_printed[SESSIONS] = { false };
+				if (!error_printed[i]) {
+					printf("Stream %d: av_buffersink_get_frame error %d: %s\n", i, ret, errbuf);
+					error_printed[i] = true;
+				}
 			}
 			// 如果 ret < 0，表示没有新帧可用，继续使用 stream_frames[i] 中的旧帧
 
@@ -1604,7 +1673,17 @@ int main(int argc, char* argv[]) {
 
 	std::vector<std::thread> input_threads;
 	for (int i = 0; i < SESSIONS; ++i) {
+		// 为每个流生成不同的URL
+		// 选项1：使用 inputPrefix 生成不同的URL（需要本地RTMP服务器）
+		// std::string url = "rtmp://localhost/live/" + inputPrefix + "-" + std::to_string(i + 1);
+
+		// 选项2：所有流使用同一个URL（用于测试）
 		std::string url = "rtmp://liteavapp.qcloud.com/live/liteavdemoplayerstreamid";
+
+		// 选项3：使用不同的测试URL（如果有多个测试流）
+		// std::string url = "rtmp://liteavapp.qcloud.com/live/liteavdemoplayerstreamid" + std::to_string(i);
+
+		printf("Creating input thread %d for URL: %s\n", i, url.c_str());
 		input_threads.emplace_back(input_stream_handler, url, i);
 	}
 
