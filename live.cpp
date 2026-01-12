@@ -20,6 +20,7 @@ extern "C" {
 #include <libavfilter/buffersink.h>
 #include <libavfilter/buffersrc.h>
 #include <libavformat/avformat.h>
+#include <libavutil/error.h>
 #include <libavutil/frame.h>
 #include <libavutil/imgutils.h>
 #include <libavutil/log.h>
@@ -264,21 +265,34 @@ void scaler(int i) {
 	// [out] - 输出端点
 	std::string filter_desc = "[in]setpts=PTS-STARTPTS,scale=w=" HWSTR ":h=" HHSTR "[out]";
 	// 解析滤镜描述字符串，构建滤镜图，连接输入和输出端点
-	// 注意：avfilter_graph_parse 会接管并释放 input_inout 和 output_inout
-	// avfilter_graph_parse 的参数顺序是：graph, filters, inputs, outputs, log_ctx
-	ret = avfilter_graph_parse(filter_graph, filter_desc.c_str(), input_inout,
-		output_inout, nullptr);
-	input_inout = nullptr; // 已被 avfilter_graph_parse 接管
-	output_inout = nullptr; // 已被 avfilter_graph_parse 接管
+	// 注意：avfilter_graph_parse_ptr 会接管并释放 input_inout 和 output_inout
+	// 使用 avfilter_graph_parse_ptr 替代已废弃的 avfilter_graph_parse
+	ret = avfilter_graph_parse_ptr(filter_graph, filter_desc.c_str(),
+		&output_inout, &input_inout, nullptr);
 	if (ret < 0) {
-		printf("graph parse failed %d\n", ret);
+		char errbuf[AV_ERROR_MAX_STRING_SIZE];
+		av_strerror(ret, errbuf, AV_ERROR_MAX_STRING_SIZE);
+		printf("graph parse failed %d: %s\n", ret, errbuf);
+		avfilter_inout_free(&input_inout);
+		avfilter_inout_free(&output_inout);
 		avfilter_graph_free(&filter_graph);
 		return;
 	}
+	// 成功时连接点已被接管，标记为 nullptr 避免重复释放
+	input_inout = nullptr;
+	output_inout = nullptr;
 	// 配置滤镜图，验证并初始化所有滤镜连接
 	ret = avfilter_graph_config(filter_graph, nullptr);
 	if (ret < 0) {
-		printf("graph config failed %d\n", ret);
+		char errbuf[AV_ERROR_MAX_STRING_SIZE];
+		av_strerror(ret, errbuf, AV_ERROR_MAX_STRING_SIZE);
+		printf("graph config failed %d: %s\n", ret, errbuf);
+		// 打印滤镜图的详细信息以便调试
+		char* graph_desc = avfilter_graph_dump(filter_graph, nullptr);
+		if (graph_desc) {
+			printf("Filter graph dump:\n%s\n", graph_desc);
+			av_free(graph_desc);
+		}
 		avfilter_graph_free(&filter_graph);
 		return;
 	}
@@ -288,6 +302,12 @@ void scaler(int i) {
 	// 将输入滤镜上下文保存到全局数组，供后续使用（用于推送原始帧）
 	inputs.at(i) = input_filter_ctx;
 	// filter_graph 会在程序结束时或显式清理时释放
+	printf("scaler %d initialized successfully\n", i);
+}
+
+// 检查 scaler 是否成功初始化
+bool is_scaler_initialized(int i) {
+	return scaled.at(i) != nullptr && inputs.at(i) != nullptr;
 }
 
 // 生成一个占位画面帧（null_frame），当输入流不可用或出错时作为默认画面使用
@@ -758,6 +778,7 @@ void input_stream_handler(const std::string& url, int i) {
 		int64_t delta = 0;        // 时间差（未使用）
 		int missed = 0;          // 丢失帧计数（未使用）
 		int64_t first_frame = -1; // 第一帧的时间戳，用于计算帧率
+		bool parameters_set = false; // 标记是否已设置输入参数
 
 		// ========== 第八步：主循环 - 读取、解码和处理帧 ==========
 		while (true) {
@@ -800,6 +821,29 @@ void input_stream_handler(const std::string& url, int i) {
 					if (first_frame < 0) {
 						first_frame = av_gettime();
 					}
+
+					// 在添加第一帧之前，设置输入参数以匹配实际输入流属性
+					// 这样可以避免 "Changing video frame properties on the fly" 警告
+					if (!parameters_set && inputs[i] != nullptr) {
+						AVBufferSrcParameters* params = av_buffersrc_parameters_alloc();
+						if (params != nullptr) {
+							params->format = frame->format;
+							params->width = frame->width;
+							params->height = frame->height;
+							params->time_base = decode_ctx->time_base;
+							params->sample_aspect_ratio = frame->sample_aspect_ratio;
+
+							ret = av_buffersrc_parameters_set(inputs[i], params);
+							av_free(params);
+							if (ret < 0) {
+								printf("warning: failed to set input parameters for stream %d: %d\n", i, ret);
+							} else {
+								parameters_set = true;
+								printf("input stream %d parameters set: %dx%d, format=%d\n",
+									i, frame->width, frame->height, frame->format);
+							}
+						}
+					}
 					// 帧率控制：如果处理速度跟不上，丢弃当前帧
 					// 66666 微秒 ≈ 1/15 秒，即期望每帧处理时间不超过 15fps
 					// 如果当前时间超过预期时间，说明处理太慢，丢弃帧并重新连接
@@ -815,6 +859,11 @@ void input_stream_handler(const std::string& url, int i) {
 					{
 						std::lock_guard<std::mutex> guard(locks[i]);
 						// inputs[i] 是第 i 个流的输入滤镜（buffer），用于接收原始帧
+						if (inputs[i] == nullptr) {
+							printf("input %d filter not initialized, skipping frame\n", i);
+							av_frame_unref(frame);
+							break;
+						}
 						ret = av_buffersrc_add_frame(inputs[i], frame);
 					}
 					if (ret < 0) {
@@ -836,7 +885,9 @@ void input_stream_handler(const std::string& url, int i) {
 
 		// 向滤镜图输入一个空帧（占位帧），表示当前流不可用
 		// 这样输出端可以继续工作，使用占位画面
-		av_buffersrc_write_frame(inputs[i], null_frame);
+		if (inputs[i] != nullptr) {
+			av_buffersrc_write_frame(inputs[i], null_frame);
+		}
 
 		// 释放解码器上下文
 		// 注意：使用 avcodec_free_context 而不是 avcodec_close
@@ -913,6 +964,18 @@ void output_thread() {
 
 		// ========== 第一步：从每个输入流获取最新帧 ==========
 		for (int i = 0; i < SESSIONS; ++i) {
+			// 检查 scaler 是否已初始化
+			if (!is_scaler_initialized(i)) {
+				printf("warning: scaler %d not initialized, skipping\n", i);
+				// 使用占位帧
+				stream_frames[i]->pts = pts;
+				ret = av_buffersrc_write_frame(compose_inputs[i], stream_frames[i]);
+				if (ret < 0) {
+					printf("add buffersrc i %d ret %d\n", i, ret);
+				}
+				continue;
+			}
+
 			// 使用互斥锁保护，因为可能有其他线程在操作 scaled[i]
 			{
 				std::lock_guard<std::mutex> guard(locks[i]);
@@ -1527,17 +1590,25 @@ int main(int argc, char* argv[]) {
 
 	for (int i = 0; i < SESSIONS; ++i) {
 		scaler(i); // 缩放滤镜
+		if (!is_scaler_initialized(i)) {
+			printf("ERROR: Failed to initialize scaler %d, exiting\n", i);
+			return 1;
+		}
 	}
 
 	compositor(); // 组合滤镜
+	if (composed == nullptr) {
+		printf("ERROR: Failed to initialize compositor, exiting\n");
+		return 1;
+	}
 
 	std::vector<std::thread> input_threads;
 	for (int i = 0; i < SESSIONS; ++i) {
-		std::string url = "rtmp://localhost/live/" + inputPrefix + "-" + std::to_string(i + 1);
+		std::string url = "rtmp://liteavapp.qcloud.com/live/liteavdemoplayerstreamid";
 		input_threads.emplace_back(input_stream_handler, url, i);
 	}
 
-	std::thread audio(audio_input_handler);
+	// std::thread audio(audio_input_handler);
 	std::thread output(output_thread);
 	std::thread output_io(output_io_thread);
 	for (auto&& thread : input_threads) {
