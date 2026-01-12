@@ -94,6 +94,8 @@ void compositor() {
 		printf("create out filter error %d\n", ret);
 		avfilter_inout_free(&output_inout);
 		avfilter_graph_free(&filter_graph);
+		avfilter_inout_free(&output_inout);
+		avfilter_graph_free(&filter_graph);
 		return;
 	}
 	// 为每个会话创建输入滤镜和连接点
@@ -111,6 +113,12 @@ void compositor() {
 				NULL, filter_graph);
 		if (ret) {
 			printf("create in filter %d error %d\n", i, ret);
+			// 清理已分配的输入连接点
+			for (int j = 0; j < i; ++j) {
+				avfilter_inout_free(&input_inouts[j]);
+			}
+			avfilter_inout_free(&output_inout);
+			avfilter_graph_free(&filter_graph);
 			// 清理已分配的输入连接点
 			for (int j = 0; j < i; ++j) {
 				avfilter_inout_free(&input_inouts[j]);
@@ -1525,14 +1533,11 @@ int main(int argc, char* argv[]) {
 
 	std::vector<std::thread> input_threads;
 	for (int i = 0; i < SESSIONS; ++i) {
-		std::string url = "rtmp://liteavapp.qcloud.com/live/liteavdemoplayerstreamid";
-		input_threads.emplace_back(input_stream_handler, url, i);
+		std::string url = "rtmp://localhost/live/" + inputPrefix + "-" + std::to_string(i + 1);
+		input_threads.emplace_back(std::thread(input_stream_handler(url), i));
 	}
 
-	// 音频输入线程：从RTMP流读取音频并放入队列
-	// 如果不需要音频功能，可以注释掉以下两行
-	// std::thread audio(audio_input_handler, "rtmp://localhost/live/audio");
-
+	std::thread audio(audio_input_handler("rtmp://localhost/live/audio"));
 	std::thread output(output_thread);
 	std::thread output_io(output_io_thread);
 	for (auto&& thread : input_threads) {
